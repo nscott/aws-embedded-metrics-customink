@@ -8,8 +8,6 @@ module Aws
       module Sinks
         #
         # Create a sink that will communicate to a CloudWatch Log Agent over a TCP connection.
-        # This is intended to be used on ECS Fargate instances where the CloudWatch Log Agent
-        # is deployed as a side-car container.
         #
         # See https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch_Embedded_Metric_Format_Generation_CloudWatch_Agent.html
         # for configuration information

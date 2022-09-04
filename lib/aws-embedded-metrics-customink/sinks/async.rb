@@ -7,46 +7,35 @@ module Aws
     module Metrics
       module Sinks
         #
-        # Create a sink that will communicate to a CloudWatch Log Agent over a TCP connection.
-        # This version pushes messages into a queue which is read by a separate thread and piped to the agent.
-        #
-        # See https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch_Embedded_Metric_Format_Generation_CloudWatch_Agent.html
-        # for configuration information
-        class TcpAsync
+        # Create a sink that will immediately take in messages, enqueue them, and forward them on to a sink.
+        class Async
           DEFAULT_ENV_VAR_NAME = 'AWS_EMF_AGENT_ENDPOINT'
           attr_reader :queue, :sender
 
           #
-          # Create a new TcpAsync sink. This builds on the Tcp sink; see the documentation there for more information.
+          # Create a new Async sink which wraps an existing sink. This is most beneficial with the tcp sink.
           #
-          # This was built as a performance-critical piece of code since metrics are often a high-volume item.
+          # This was built as a performance-critical piece of code since metrics are often sent in high volumes.
           # +#accept+, which is what takes in messages to send to the CW Metric Agent, puts messages into a thread-safe
-          # queue. A separate thread is then picking up from that queue and sending the messages to a Tcp sink.
+          # queue. A separate thread is then picking up from that queue and sending the messages to the chosen sink.
           #
-          # <b>Creating a new EcsFargate sink will create a new thread and connection to the agent.</b>
-          # This sink is intended to be used sparingly.
+          # <b>Creating a new Async sink will create a new thread.</b> This sink is intended to be used sparingly.
           #
-          # Messages that time out or can't be sent are lost.
+          # Messages that sent to the sink; no more information is known about the message after that.
+          # If the sink cannot process the message, it is lost.
+          #
           # If a message is enqueued and the queue is full, the message is dropped and a warning is logged.
-          #
-          # @param conn_str [String] A connection string, formatted like 'tcp://127.0.0.1:25888'
-          # @param conn_timeout_secs [Numeric] The number of seconds before timing out the connection to the agent.
-          #   10 by default.
-          # @param write_timeout_secs [Numeric] The number of seconds to wait before timing out a write.
-          #   10 by default.
+          # @param sink [Sink] A sink to wrap. +#accept+ will be the only method called on the sink.
           # @param logger [Logger] A standard Ruby logger to propagate warnings and errors.
           #   Suggested to use Rails.logger.
           # @param max_queue_size [Numeric] The number of messages to buffer in-memory.
           #   A negative value will buffer everything.
-          def initialize(conn_str: ENV.fetch(DEFAULT_ENV_VAR_NAME, nil),
-                         conn_timeout_secs: 10,
-                         write_timeout_secs: 10,
+          def initialize(sink,
                          logger: nil,
                          max_queue_size: 1_000)
-            @sender = Tcp.new(conn_str: conn_str,
-                              conn_timeout_secs: conn_timeout_secs,
-                              write_timeout_secs: write_timeout_secs,
-                              logger: logger)
+            raise Sinks::Error, 'Must specify a sink to wrap' if sink.nil?
+
+            @sink = sink
 
             @max_queue_size = max_queue_size
             @queue = Queue.new
@@ -58,7 +47,7 @@ module Aws
 
           def accept(message)
             if @max_queue_size > -1 && @queue.length > @max_queue_size
-              @logger&.warn("TcpAsync metrics queue is full (#{@max_queue_size} items)! Dropping metric message.")
+              @logger&.warn("Async metrics queue is full (#{@max_queue_size} items)! Dropping metric message.")
               return
             end
 
@@ -107,7 +96,7 @@ module Aws
                 message = queue.pop
                 break if stop_message_class == message.class
 
-                @sender.accept(message)
+                @sink.accept(message)
               end
             end
           end
